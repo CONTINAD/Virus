@@ -143,8 +143,9 @@ export function spinWheel(
 
   // Wheel rotates clockwise. To put `angleInSlice` (measured clockwise from
   // 12-o'clock on the un-rotated wheel) directly under the pointer, the wheel
-  // must rotate (2π − angleInSlice) plus N full turns.
-  const rotations = opts?.rotations ?? 6 + Math.floor(Math.random() * 3); // 6..8 spins
+  // must rotate (2π − angleInSlice) plus N full turns. More turns + longer
+  // duration = more dramatic spin that holds suspense to the final slowdown.
+  const rotations = opts?.rotations ?? 9 + Math.floor(Math.random() * 4); // 9..12 spins
   const targetAngle = rotations * 2 * Math.PI + (2 * Math.PI - angleInSlice);
 
   return {
@@ -153,7 +154,7 @@ export function spinWheel(
     winnerIndex,
     targetAngle,
     rotations,
-    durationMs: opts?.durationMs ?? 7000,
+    durationMs: opts?.durationMs ?? 9500,
     seed: randomBytes(8).toString("hex"),
   };
 }

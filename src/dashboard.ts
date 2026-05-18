@@ -296,12 +296,29 @@ export function renderHTML(): string {
     border-top: 38px solid var(--blood);
     filter: drop-shadow(0 6px 14px rgba(239,68,68,.65));
     z-index: 5;
+    transform-origin: 50% 0%;
+    transition: filter .15s ease;
   }
   .wheel-pointer::after {
     content: "🧪"; position: absolute; top: -52px; left: 50%; transform: translateX(-50%);
     font-size: 26px;
     filter: drop-shadow(0 0 8px rgba(239,68,68,.6));
   }
+  /* every time a slice boundary crosses under the pointer it "ticks" — like
+     a roulette wheel hitting pins. JS toggles .tick briefly. */
+  .wheel-pointer.tick {
+    animation: pointer-tick 110ms ease-out;
+  }
+  @keyframes pointer-tick {
+    0%   { transform: translateX(-50%) rotate(0deg) scaleY(1); }
+    35%  { transform: translateX(-50%) rotate(-9deg) scaleY(0.92); filter: drop-shadow(0 4px 10px rgba(251,146,60,.9)); }
+    100% { transform: translateX(-50%) rotate(0deg) scaleY(1); }
+  }
+  /* during the high-speed phase the canvas gets a tiny motion blur, removed
+     once the spin decelerates so labels are sharp on the final slice. */
+  .wheel-canvas.spin-fast { filter: blur(2px) saturate(1.1); }
+  .wheel-canvas.spin-mid  { filter: blur(0.8px); }
+  .wheel-canvas.spin-end  { filter: none; }
   .wheel-outer {
     position: absolute; inset: 0;
     border-radius: 50%;
@@ -447,7 +464,7 @@ export function renderHTML(): string {
   /* ── STATS ───────────────────────────────────────────────────────── */
   .stat-strip {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(3, 1fr);
     gap: 14px;
     margin-top: 24px;
   }
@@ -772,6 +789,11 @@ export function renderHTML(): string {
     <!-- STATS -->
     <section class="stat-strip">
       <div class="stat accent">
+        <div class="label">🦠 TOTAL SPREADERS</div>
+        <div class="value" id="totalSpreaders">0</div>
+        <div class="sub" id="totalSpreadersSub">wallets currently holding $VIRUS</div>
+      </div>
+      <div class="stat">
         <div class="label">💀 PEOPLE INFECTED</div>
         <div class="value" id="uniqueInfected">0</div>
         <div class="sub" id="infectedSub">unique wallets that have caught $VIRUS</div>
@@ -1010,7 +1032,48 @@ function shade(hsl, delta) {
 // ============== SPIN ANIMATION ==============
 let spinPlaybackId = null;
 let currentRotation = 0;
-const easeOut = (t) => 1 - Math.pow(1 - t, 4);
+// Quintic ease-out — fast launch, long suspenseful taper. Holds the audience
+// at "is it stopping?" for the last ~25% of the duration.
+const easeOut = (t) => 1 - Math.pow(1 - t, 5);
+
+const TWO_PI = Math.PI * 2;
+function normAngle(a) {
+  a = a % TWO_PI;
+  return a < 0 ? a + TWO_PI : a;
+}
+
+/**
+ * Find which slice is currently under the top pointer given the wheel's
+ * current rotation. Returns slice index or -1 if no layout.
+ */
+function sliceUnderPointer(layout, rot) {
+  if (!layout || !layout.slices || !layout.slices.length) return -1;
+  // The pointer sits at angle 0 in world space (12-o'clock). The wheel's
+  // local coordinate at the pointer is (2π - rot mod 2π).
+  const local = normAngle(TWO_PI - normAngle(rot));
+  for (let i = 0; i < layout.slices.length; i++) {
+    const s = layout.slices[i];
+    if (local >= s.startAngle && local < s.endAngle) return i;
+  }
+  return layout.slices.length - 1;
+}
+
+function tickPointer() {
+  const ptr = document.querySelector('.wheel-pointer');
+  if (!ptr) return;
+  ptr.classList.remove('tick');
+  // force reflow so the animation can restart back-to-back
+  void ptr.offsetWidth;
+  ptr.classList.add('tick');
+}
+
+function setCanvasBlur(t) {
+  // t is normalized 0..1 elapsed-time. Match blur class to current visual speed.
+  canvas.classList.remove('spin-fast', 'spin-mid', 'spin-end');
+  if (t < 0.55) canvas.classList.add('spin-fast');
+  else if (t < 0.82) canvas.classList.add('spin-mid');
+  else canvas.classList.add('spin-end');
+}
 
 function playSpin(spin) {
   const id = spin.startedAt + ':' + spin.winnerIndex;
@@ -1025,6 +1088,7 @@ function playSpin(spin) {
   const endRot = spin.targetAngle;
   const startedAt = spin.startedAt;
   const duration = spin.durationMs;
+  let lastSliceIdx = sliceUnderPointer(spin.layout, startRot);
 
   const tick = () => {
     const t = Math.min(1, Math.max(0, (Date.now() - startedAt) / duration));
@@ -1032,10 +1096,25 @@ function playSpin(spin) {
     const rot = startRot + (endRot - startRot) * eased;
     canvas.style.transform = 'rotate(' + rot + 'rad)';
     currentRotation = rot;
+    setCanvasBlur(t);
+
+    // pointer "ticks" whenever a slice boundary crosses under it — drama in
+    // the slow-down phase. Only fire ticks once we're past the high-speed
+    // blur phase so it doesn't look like a strobe.
+    if (t > 0.45) {
+      const idx = sliceUnderPointer(spin.layout, rot);
+      if (idx !== lastSliceIdx) {
+        tickPointer();
+        lastSliceIdx = idx;
+      }
+    }
+
     if (t < 1 && spinPlaybackId === id) requestAnimationFrame(tick);
     else if (spinPlaybackId === id) {
       canvas.style.transform = 'rotate(' + endRot + 'rad)';
       currentRotation = endRot;
+      canvas.classList.remove('spin-fast', 'spin-mid', 'spin-end');
+      tickPointer(); // one last tick as it locks in
       showWinnerOverlay(spin);
     }
   };
@@ -1141,6 +1220,7 @@ async function refresh() {
     }
 
     // stats
+    document.getElementById('totalSpreaders').textContent = fmtTok(s.current.holderCount || 0);
     document.getElementById('uniqueInfected').textContent = fmtTok(s.totals.uniqueInfected || 0);
     document.getElementById('solToWinners').textContent = fmt(s.totals.solToWinners || 0, 4);
     document.getElementById('outbreaks').textContent = fmtTok(s.totals.outbreaks || 0);
