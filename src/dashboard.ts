@@ -1274,14 +1274,20 @@ async function refresh() {
       document.getElementById('wheelOverlay').classList.remove('show');
     }
 
-    // burn animation overlay
+    // burn animation overlay — but hold back at least 5s after the winner
+    // card became visible so the audience reads the patient zero first.
     const burn = s.liveBurn;
     const burnOverlay = document.getElementById('burnOverlay');
-    if (burn) {
+    const winnerCardVisibleAt = live ? (live.startedAt + live.durationMs) : 0;
+    const minBurnShowAt = winnerCardVisibleAt + 5000;
+    const burnGateOpen = !winnerCardVisibleAt || Date.now() >= minBurnShowAt;
+    if (burn && burnGateOpen) {
       const age = Date.now() - burn.startedAt;
       const stillFresh = burn.status === 'buying' || burn.status === 'burning' || age < 30000;
       if (stillFresh) {
         burnOverlay.classList.add('show');
+        // hide the winner card so the burn animation gets the spotlight
+        document.getElementById('wheelOverlay').classList.remove('show');
         const label = document.getElementById('burnLabel');
         const amt = document.getElementById('burnAmount');
         const status = document.getElementById('burnStatus');
