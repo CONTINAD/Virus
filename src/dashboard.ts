@@ -701,7 +701,7 @@ export function renderHTML(): string {
       <div class="nav">
         <a id="dexLink" href="https://dexscreener.com/solana" target="_blank" rel="noopener">DEX</a>
         <a id="pumpLink" href="https://pump.fun" target="_blank" rel="noopener">PUMP</a>
-        <a href="https://x.com" target="_blank" rel="noopener">X</a>
+        <a href="https://x.com/i/communities/2005814104720605637" target="_blank" rel="noopener">X COMMUNITY</a>
         <a href="https://t.me" target="_blank" rel="noopener">TG</a>
       </div>
     </div>
