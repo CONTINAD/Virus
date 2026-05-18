@@ -117,6 +117,10 @@ export class BuybackBurner {
     priority: number,
     attempt: number
   ): Promise<string> {
+    // pool: "auto" lets PumpPortal route the buy to whichever venue the
+    // token is currently live on — bonding curve while pre-graduation,
+    // PumpSwap (or Raydium) post-graduation. Hardcoding "pump" breaks the
+    // moment the bonding curve completes.
     const body = {
       publicKey: this.buyer.publicKey.toBase58(),
       action: "buy" as const,
@@ -125,7 +129,7 @@ export class BuybackBurner {
       denominatedInSol: "true",
       slippage: config.buybackSlippagePct,
       priorityFee: priority,
-      pool: "pump" as const,
+      pool: "auto" as const,
     };
 
     const r = await fetch("https://pumpportal.fun/api/trade-local", {
