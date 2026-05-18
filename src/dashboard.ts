@@ -564,8 +564,66 @@ export function renderHTML(): string {
   .ev.kind-spin-result .pill { background: rgba(239,68,68,.18); color: var(--blood); }
   .ev.kind-send     .pill { background: rgba(74,222,128,.18); color: var(--virus-0); }
   .ev.kind-marketing .pill { background: rgba(212,237,49,.14); color: var(--sickly); }
+  .ev.kind-buyback  .pill { background: rgba(245,158,11,.18); color: var(--hazard); }
+  .ev.kind-burn     .pill { background: rgba(239,68,68,.20); color: #fb923c; font-weight: 700; }
   .ev.kind-error    .pill { background: rgba(239,68,68,.14); color: var(--blood); }
   .ev.kind-info     .pill { background: rgba(255,255,255,.05); color: var(--ink-dim); }
+
+  /* ─── burn animation overlay (sits over the wheel after winner is paid) ─── */
+  .burn-overlay {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; opacity: 0; transition: opacity .5s ease;
+    z-index: 9;
+  }
+  .burn-overlay.show { opacity: 1; pointer-events: auto; }
+  .burn-card {
+    background: radial-gradient(ellipse at center, rgba(20,5,5,.95), rgba(8,4,4,.92));
+    border: 2px solid rgba(251,146,60,.7);
+    box-shadow: 0 0 60px rgba(251,146,60,.5), inset 0 0 40px rgba(239,68,68,.2);
+    padding: 28px 36px; border-radius: 22px;
+    text-align: center; min-width: 280px;
+    backdrop-filter: blur(8px);
+    animation: burn-pulse 1.4s ease-in-out infinite alternate;
+  }
+  .burn-card .label {
+    font-family: 'Permanent Marker', cursive;
+    color: #fb923c; font-size: 14px; letter-spacing: .14em;
+    margin-bottom: 8px;
+  }
+  .burn-card .amount {
+    font-family: 'Permanent Marker', cursive;
+    font-size: 44px; color: #fff;
+    text-shadow: 0 0 18px #fb923cdd, 0 0 36px #ef4444aa;
+    line-height: 1;
+  }
+  .burn-card .amount .unit { font-size: 16px; color: var(--ink-dim); margin-left: 6px; }
+  .burn-card .status-line {
+    margin-top: 12px; font-size: 12px; color: var(--ink-dim);
+    font-family: 'JetBrains Mono';
+  }
+  .burn-card .flames { font-size: 28px; margin: 6px 0; letter-spacing: 6px; }
+  .burn-card .flames span {
+    display: inline-block;
+    animation: flame-flicker 0.6s ease-in-out infinite alternate;
+  }
+  .burn-card .flames span:nth-child(2) { animation-delay: .1s; }
+  .burn-card .flames span:nth-child(3) { animation-delay: .2s; }
+  .burn-card .flames span:nth-child(4) { animation-delay: .15s; }
+  .burn-card .flames span:nth-child(5) { animation-delay: .05s; }
+  @keyframes burn-pulse {
+    0% { box-shadow: 0 0 60px rgba(251,146,60,.4), inset 0 0 40px rgba(239,68,68,.15); }
+    100% { box-shadow: 0 0 90px rgba(251,146,60,.8), inset 0 0 60px rgba(239,68,68,.35); }
+  }
+  @keyframes flame-flicker {
+    0% { transform: translateY(0) scale(1); filter: hue-rotate(0deg); }
+    100% { transform: translateY(-3px) scale(1.12); filter: hue-rotate(-12deg); }
+  }
+
+  /* burn stat tile gets a hotter color */
+  .stat.burn { border-color: rgba(251,146,60,.35); }
+  .stat.burn .label { color: #fb923c; }
+  .stat.burn .value { color: #ffba6b; text-shadow: 0 0 14px rgba(251,146,60,.4); }
   .ev .body { flex: 1; min-width: 0; }
   .ev .msg { font-size: 13px; color: var(--ink); word-break: break-word; }
   .ev .meta { font-size: 11px; color: var(--ink-dim); margin-top: 3px; font-family: 'JetBrains Mono'; }
@@ -636,15 +694,17 @@ export function renderHTML(): string {
       <div class="hero-copy">
         <span class="kicker">⚠ HOLDER-WEIGHTED OUTBREAK ⚠</span>
         <h1>SPIN.<br/>INFECT.<br/><span class="virus-mark">SPREAD.</span></h1>
-        <div class="subhead">every 5 minutes one wallet gets infected with SOL</div>
+        <div class="subhead">it's spreading and eating the supply alive 🦠🔥</div>
         <p>
           Hold <b>$VIRUS</b> → you're a carrier. Every 5 min the bot claims pump.fun
           creator fees, snapshots every infected wallet, and spins a wheel where
           <b>bigger bags = bigger slices</b>. One winner per outbreak takes
           <b><span id="winnerPct">50</span>% of the claim in pure SOL</b>, routed
           through 2 ephemeral quarantine wallets so there's no direct trail.
-          The other <span id="marketingPct">50</span>% goes straight to marketing —
-          the more we spread, the bigger the prize pool grows.
+          <span id="marketingPct">30</span>% feeds the marketing budget — and
+          <b style="color:#fb923c"><span id="buybackPct">20</span>% buys $VIRUS
+          and incinerates it on-chain</b> every single cycle. The supply only
+          shrinks. The pot only grows.
         </p>
         <div class="ca-pill" id="ca" title="click to copy contract address">
           <span id="caText">awaiting outbreak…</span>
@@ -673,6 +733,14 @@ export function renderHTML(): string {
             <div class="addr" id="overlayAddr">—</div>
             <div class="prize" id="overlayPrize">— <span class="unit">SOL</span></div>
             <div class="status-line" id="overlayStatus">awaiting infection…</div>
+          </div>
+        </div>
+        <div class="burn-overlay" id="burnOverlay">
+          <div class="burn-card">
+            <div class="label" id="burnLabel">🔥 BUYING BACK 🔥</div>
+            <div class="flames"><span>🔥</span><span>🔥</span><span>🔥</span><span>🔥</span><span>🔥</span></div>
+            <div class="amount" id="burnAmount">— <span class="unit">SOL</span></div>
+            <div class="status-line" id="burnStatus">queuing pump.fun buy…</div>
           </div>
         </div>
       </div>
@@ -713,6 +781,11 @@ export function renderHTML(): string {
         <div class="value"><span id="solToWinners">0</span><span class="unit">SOL</span></div>
         <div class="sub" id="solToWinnersSub">across all outbreaks</div>
       </div>
+      <div class="stat burn">
+        <div class="label">🔥 SUPPLY INCINERATED</div>
+        <div class="value"><span id="tokensBurned">0</span></div>
+        <div class="sub" id="tokensBurnedSub">$VIRUS permanently burned</div>
+      </div>
       <div class="stat">
         <div class="label">🦠 OUTBREAKS RUN</div>
         <div class="value" id="outbreaks">0</div>
@@ -741,6 +814,24 @@ export function renderHTML(): string {
           </tr>
         </thead>
         <tbody id="winnersBody"></tbody>
+      </table>
+    </div>
+
+    <!-- INCINERATION LOG -->
+    <h2 class="section-title">🔥 Incineration Log <span class="updated" id="updatedBurns"></span></h2>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Cycle</th>
+            <th class="right">SOL spent</th>
+            <th class="right">$VIRUS burned</th>
+            <th>Buy tx</th>
+            <th>Burn tx</th>
+            <th class="right">When</th>
+          </tr>
+        </thead>
+        <tbody id="burnsBody"></tbody>
       </table>
     </div>
 
@@ -774,6 +865,8 @@ export function renderHTML(): string {
 <script>
 const SNAPSHOT_LEAD = ${config.snapshotLeadSeconds};
 const WINNER_PCT = ${config.winnerPercent};
+const MARKETING_PCT = ${config.marketingPercent};
+const BUYBACK_PCT = ${config.buybackPercent};
 const fmt = (n, d=2) => Number(n||0).toLocaleString(undefined, { maximumFractionDigits: d });
 const fmtTok = (n) => {
   n = Number(n||0);
@@ -1007,7 +1100,8 @@ async function refresh() {
     const s = await r.json();
 
     var wp = document.getElementById('winnerPct'); if (wp) wp.textContent = String(WINNER_PCT);
-    var mp = document.getElementById('marketingPct'); if (mp) mp.textContent = String(100 - WINNER_PCT);
+    var mp = document.getElementById('marketingPct'); if (mp) mp.textContent = String(MARKETING_PCT);
+    var bp = document.getElementById('buybackPct'); if (bp) bp.textContent = String(BUYBACK_PCT);
 
     // CA + links
     const ca = s.virusMint || '';
@@ -1050,6 +1144,10 @@ async function refresh() {
     document.getElementById('uniqueInfected').textContent = fmtTok(s.totals.uniqueInfected || 0);
     document.getElementById('solToWinners').textContent = fmt(s.totals.solToWinners || 0, 4);
     document.getElementById('outbreaks').textContent = fmtTok(s.totals.outbreaks || 0);
+    const tb = s.totals.tokensBurnedUi || 0;
+    document.getElementById('tokensBurned').textContent = fmtTok(tb);
+    document.getElementById('tokensBurnedSub').textContent =
+      (s.totals.burnCount || 0) + ' burns · ' + fmt(s.totals.solToBuybacks || 0, 4) + ' SOL spent';
 
     const poolSol = (s.claimPoolLamports||0)/1e9;
     const nextPot = poolSol * (WINNER_PCT / 100);
@@ -1095,6 +1193,55 @@ async function refresh() {
       }
       document.getElementById('wheelOverlay').classList.remove('show');
     }
+
+    // burn animation overlay
+    const burn = s.liveBurn;
+    const burnOverlay = document.getElementById('burnOverlay');
+    if (burn) {
+      const age = Date.now() - burn.startedAt;
+      const stillFresh = burn.status === 'buying' || burn.status === 'burning' || age < 30000;
+      if (stillFresh) {
+        burnOverlay.classList.add('show');
+        const label = document.getElementById('burnLabel');
+        const amt = document.getElementById('burnAmount');
+        const status = document.getElementById('burnStatus');
+        if (burn.status === 'buying') {
+          label.innerHTML = '🦠 BUYING BACK 🦠';
+          amt.innerHTML = fmt(burn.solAmount, 4) + ' <span class="unit">SOL</span>';
+          status.textContent = 'pumping ' + fmt(burn.solAmount, 4) + ' SOL into $VIRUS…';
+        } else if (burn.status === 'burning') {
+          label.innerHTML = '🔥 INCINERATING 🔥';
+          amt.innerHTML = fmt(burn.solAmount, 4) + ' <span class="unit">SOL</span>';
+          status.innerHTML = 'bought · burning the bag · ' + (burn.buyTx ? sigLink(burn.buyTx) : '');
+        } else if (burn.status === 'done') {
+          label.innerHTML = '🔥 SUPPLY EATEN 🔥';
+          amt.innerHTML = fmtTok(burn.tokensBurnedUi || 0) + ' <span class="unit">$VIRUS</span>';
+          status.innerHTML = 'burned · ' + (burn.burnTx ? sigLink(burn.burnTx) : '');
+        } else if (burn.status === 'failed') {
+          label.innerHTML = '⚠ BURN FAILED ⚠';
+          amt.innerHTML = '— <span class="unit">$VIRUS</span>';
+          status.textContent = (burn.error || 'unknown error').slice(0, 80);
+        }
+      } else {
+        burnOverlay.classList.remove('show');
+      }
+    } else {
+      burnOverlay.classList.remove('show');
+    }
+
+    // incineration log
+    const burns = (s.burns || []).slice().reverse().slice(0, 50);
+    document.getElementById('burnsBody').innerHTML = burns.length ? burns.map(b =>
+      '<tr>' +
+        '<td><span class="rank">#' + b.cycle + '</span></td>' +
+        '<td class="right">' + fmt(b.solSpent, 4) + ' SOL</td>' +
+        '<td class="right" style="color:#fb923c;font-weight:700">' + fmtTok(b.tokensBurnedUi) + '</td>' +
+        '<td class="mono">' + sigLink(b.buyTx) + '</td>' +
+        '<td class="mono">' + sigLink(b.burnTx) + '</td>' +
+        '<td class="right">' + ago(b.ts) + '</td>' +
+      '</tr>'
+    ).join('') : '<tr><td colspan="6" class="empty">No burns yet — first incineration after the next outbreak.</td></tr>';
+    document.getElementById('updatedBurns').textContent = 'updated ' + new Date().toLocaleTimeString();
 
     // infection log
     const winners = (s.winners || []).slice().reverse().slice(0, 50);

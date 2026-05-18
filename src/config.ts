@@ -41,7 +41,16 @@ export const config = {
   cycleIntervalSeconds: Number(process.env.CYCLE_INTERVAL_SECONDS || "300"),
   snapshotLeadSeconds: Number(process.env.SNAPSHOT_LEAD_SECONDS || "10"),
   minPrizeSol: Number(process.env.MIN_PRIZE_SOL || "0.005"),
+
+  // 3-way split of every claim. Defaults sum to 100 (50 / 30 / 20).
   winnerPercent: Number(process.env.WINNER_PERCENT || "50"),
+  marketingPercent: Number(process.env.MARKETING_PERCENT || "30"),
+  buybackPercent: Number(process.env.BUYBACK_PERCENT || "20"),
+  // Slippage tolerance for pump.fun buybacks (percent).
+  buybackSlippagePct: Number(process.env.BUYBACK_SLIPPAGE_PCT || "10"),
+  // Skip buyback if slice falls below this — avoids dust buys.
+  minBuybackSol: Number(process.env.MIN_BUYBACK_SOL || "0.002"),
+
   maxSolPerCycle: Number(process.env.MAX_SOL_PER_CYCLE || "5"),
   priorityFee: Number(process.env.PRIORITY_FEE || "0.0005"),
 

@@ -1,14 +1,17 @@
 # 🦠 $VIRUS — This Will Spread
 
+> **It's spreading and eating the supply alive.** 🔥
+
 Every 5 minutes, the bot:
 
 1. **Claims** pump.fun creator fees for `$VIRUS`
 2. **Snapshots** every wallet holding `$VIRUS` (the "infected")
 3. **Spins a wheel** where slice size = how much $VIRUS the wallet holds
-4. **Pays the winner 50% of the claim in pure SOL** routed through 2 ephemeral hop wallets
-5. **Routes the other 50% to a marketing wallet** to keep the spread going
+4. **Pays the winner 50% of the claim in pure SOL** through 2 ephemeral hop wallets
+5. **Routes 30% to marketing** to keep the spread going
+6. **Spends 20% buying back $VIRUS and incinerating it on-chain** via SPL `burn` — supply only shrinks
 
-No swaps. No bridges. No wrapped tokens. Pure SOL straight into the winner's wallet.
+No swaps for the prize. No bridges. No wrapped tokens. Pure SOL straight into the winner's wallet. Real supply burned every cycle.
 
 ## 🛡 Safety: the dev's SOL is provably untouchable
 

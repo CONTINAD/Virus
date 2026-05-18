@@ -13,10 +13,13 @@ export interface CycleEvent {
     | "spin-result"
     | "send"
     | "marketing"
+    | "buyback"
+    | "burn"
     | "error";
   message: string;
   txSignature?: string;
   amountSol?: number;
+  amountTokens?: number;
   winner?: string;
 }
 
@@ -53,6 +56,30 @@ export interface LiveSpin {
   prizeError?: string;
 }
 
+/**
+ * Live buyback+burn payload the dashboard polls to play the incineration
+ * animation. Status flows: buying → burning → done | failed.
+ */
+export interface LiveBurn {
+  startedAt: number;
+  cycle: number;
+  status: "buying" | "burning" | "done" | "failed";
+  solAmount: number;
+  tokensBurnedUi?: number;
+  buyTx?: string;
+  burnTx?: string;
+  error?: string;
+}
+
+export interface BurnRecord {
+  ts: number;
+  cycle: number;
+  solSpent: number;
+  tokensBurnedUi: number;
+  buyTx: string;
+  burnTx: string;
+}
+
 export interface DashboardState {
   status: "idle" | "running" | "spinning" | "paying" | "error" | "stopped" | "watching";
   startedAt: number;
@@ -69,6 +96,9 @@ export interface DashboardState {
     solClaimed: number;
     solToWinners: number;     // total SOL paid to winners
     solToMarketing: number;   // total SOL routed to marketing
+    solToBuybacks: number;    // total SOL spent buying back $VIRUS for burns
+    tokensBurnedUi: number;   // total $VIRUS burned, decimal-adjusted
+    burnCount: number;        // # of buyback+burn cycles executed
     outbreaks: number;        // wheel spins completed
     uniqueInfected: number;   // unique wallets that have won at least once
   };
@@ -89,9 +119,12 @@ export interface DashboardState {
 
   lastWinner?: InfectionRecord;
   liveSpin?: LiveSpin;
+  liveBurn?: LiveBurn;
+  lastBurn?: BurnRecord;
 
   events: CycleEvent[];
   winners: InfectionRecord[];
+  burns: BurnRecord[];
   perHolder: Record<string, { wins: number; solReceived: number; lastTs: number; lastTx: string }>;
 }
 
@@ -99,6 +132,7 @@ const DATA_DIR = process.env.STATE_DIR || path.join(process.cwd(), "data");
 const STATE_FILE = path.join(DATA_DIR, "state.json");
 const MAX_EVENTS = 500;
 const MAX_WINNERS = 500;
+const MAX_BURNS = 500;
 
 function ensureDir() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -128,6 +162,7 @@ function loadState(): DashboardState {
     perHolder: { ...(parsed.perHolder || {}) },
     events: Array.isArray(parsed.events) ? parsed.events : [],
     winners: Array.isArray(parsed.winners) ? parsed.winners : [],
+    burns: Array.isArray(parsed.burns) ? parsed.burns : [],
   };
 }
 
@@ -146,6 +181,9 @@ function emptyState(): DashboardState {
       solClaimed: 0,
       solToWinners: 0,
       solToMarketing: 0,
+      solToBuybacks: 0,
+      tokensBurnedUi: 0,
+      burnCount: 0,
       outbreaks: 0,
       uniqueInfected: 0,
     },
@@ -155,6 +193,7 @@ function emptyState(): DashboardState {
     current: { creatorSol: 0, buyerSol: 0, holderCount: 0 },
     events: [],
     winners: [],
+    burns: [],
     perHolder: {},
   };
 }
@@ -384,6 +423,78 @@ class Tracker {
       message: `📣 Marketing slice ${solAmount.toFixed(6)} SOL routed`,
       txSignature, amountSol: solAmount,
     });
+    this.persist();
+  }
+
+  startBurnAnimation(solAmount: number) {
+    this.state.liveBurn = {
+      startedAt: Date.now(),
+      cycle: this.state.cycleCount,
+      status: "buying",
+      solAmount,
+    };
+    this.push({
+      ts: Date.now(), type: "buyback",
+      message: `🦠 Buying back ${solAmount.toFixed(6)} SOL of $VIRUS — about to incinerate the supply`,
+      amountSol: solAmount,
+    });
+    this.persist();
+  }
+
+  markBurnPhase(buyTx: string) {
+    if (this.state.liveBurn) {
+      this.state.liveBurn.status = "burning";
+      this.state.liveBurn.buyTx = buyTx;
+    }
+    this.persist();
+  }
+
+  recordBurn(p: {
+    solSpent: number;
+    tokensBurnedUi: number;
+    buyTx: string;
+    burnTx: string;
+  }) {
+    this.state.totals.solToBuybacks += p.solSpent;
+    this.state.totals.tokensBurnedUi += p.tokensBurnedUi;
+    this.state.totals.burnCount += 1;
+
+    const rec: BurnRecord = {
+      ts: Date.now(),
+      cycle: this.state.cycleCount,
+      solSpent: p.solSpent,
+      tokensBurnedUi: p.tokensBurnedUi,
+      buyTx: p.buyTx,
+      burnTx: p.burnTx,
+    };
+    this.state.burns.push(rec);
+    if (this.state.burns.length > MAX_BURNS) {
+      this.state.burns = this.state.burns.slice(-MAX_BURNS);
+    }
+    this.state.lastBurn = rec;
+
+    if (this.state.liveBurn) {
+      this.state.liveBurn.status = "done";
+      this.state.liveBurn.tokensBurnedUi = p.tokensBurnedUi;
+      this.state.liveBurn.burnTx = p.burnTx;
+    }
+
+    this.push({
+      ts: Date.now(), type: "burn",
+      message: `🔥 Incinerated ${p.tokensBurnedUi.toLocaleString(undefined, { maximumFractionDigits: 2 })} $VIRUS — supply down, faith up`,
+      txSignature: p.burnTx,
+      amountSol: p.solSpent,
+      amountTokens: p.tokensBurnedUi,
+    });
+    this.persist();
+  }
+
+  markBurnFailed(reason: string) {
+    if (this.state.liveBurn) {
+      this.state.liveBurn.status = "failed";
+      this.state.liveBurn.error = reason;
+    }
+    this.push({ ts: Date.now(), type: "error", message: `Buyback/burn failed: ${reason}` });
     this.persist();
   }
 

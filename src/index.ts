@@ -9,6 +9,7 @@ import {
 import { RewardsClaimer } from "./claim-rewards";
 import { forwardLamports } from "./forwarder";
 import { WinnerSender, sendMarketing } from "./sender";
+import { BuybackBurner } from "./buyback";
 import { snapshotHolders } from "./holders";
 import { spinWheel } from "./wheel";
 import { tracker } from "./activity";
@@ -28,7 +29,9 @@ async function main() {
   logger.info(`Buyer wallet:      ${buyer.publicKey.toBase58()}${config.singleWalletMode ? "  (same — single-wallet mode)" : ""}`);
   logger.info(`Marketing wallet:  ${config.marketingWallet || "(unset — marketing slice stays in buyer wallet)"}`);
   logger.info(`Cycle:             ${config.cycleIntervalSeconds}s · snapshot lead ${config.snapshotLeadSeconds}s`);
-  logger.info(`Split:             ${config.winnerPercent}% to winner · ${100 - config.winnerPercent}% to marketing`);
+  logger.info(
+    `Split:             ${config.winnerPercent}% winner · ${config.marketingPercent}% marketing · ${config.buybackPercent}% buyback+burn 🔥`
+  );
 
   if (tracker.resetIfWalletChanged(creator.publicKey.toBase58())) {
     logger.info("Creator wallet differs from persisted state — wiped dashboard counters for a fresh start.");
@@ -89,6 +92,7 @@ async function main() {
 
   const claimer = new RewardsClaimer(creator);
   const sender = new WinnerSender(buyer);
+  const burner = new BuybackBurner(buyer, virusMint);
   const marketingPubkey = config.marketingWallet
     ? new PublicKey(config.marketingWallet)
     : creator.publicKey;
@@ -169,25 +173,35 @@ async function main() {
       await sleep(spin.durationMs + 500);
       tracker.recordSpinResult(spin.winner.owner);
 
-      // ── 5. Compute the split — strict, never exceeds claim pool ──────────
-      // The claim pool is the bot's only spendable budget. We pay the winner
-      // exactly WINNER_PERCENT% of the pool, and route the rest to marketing.
+      // ── 5. Compute the 3-way split — strict, never exceeds claim pool ────
+      // The claim pool is the bot's only spendable budget. WINNER / MARKETING
+      // / BUYBACK percentages must sum to 100. Any rounding remainder rolls
+      // into the marketing slice (preserves a clean winner percentage).
       const pool = tracker.getClaimPool();
+      const totalPct = Math.max(
+        1,
+        config.winnerPercent + config.marketingPercent + config.buybackPercent
+      );
       const winnerPct = Math.max(0, Math.min(100, config.winnerPercent));
-      let winnerLamports = Math.floor(pool * (winnerPct / 100));
-      let marketingLamports = pool - winnerLamports;
+      const buybackPct = Math.max(0, Math.min(100, config.buybackPercent));
+      let winnerLamports = Math.floor((pool * winnerPct) / totalPct);
+      let buybackLamports = Math.floor((pool * buybackPct) / totalPct);
+      let marketingLamports = pool - winnerLamports - buybackLamports;
 
-      // Hard ceiling: a single payout may never exceed MAX_SOL_PER_CYCLE.
+      // Hard ceiling: a single winner payout may never exceed MAX_SOL_PER_CYCLE.
+      // Any trimmed amount flows back to marketing (NOT buyback) so the
+      // headline "50% to a holder" promise stays clean and predictable.
       const cycleCeil = Math.floor(Math.max(0, config.maxSolPerCycle) * LAMPORTS_PER_SOL);
       if (cycleCeil > 0 && winnerLamports > cycleCeil) {
         logger.info(`Cycle ceiling kicked in: trimming winner payout to ${config.maxSolPerCycle} SOL.`);
+        const trimmed = winnerLamports - cycleCeil;
         winnerLamports = cycleCeil;
-        marketingLamports = pool - winnerLamports;
+        marketingLamports += trimmed;
       }
 
-      // Runtime safety assert.
-      if (winnerLamports + marketingLamports > pool) {
-        const msg = `SAFETY ABORT: split (${winnerLamports} + ${marketingLamports}) > pool (${pool}).`;
+      // Runtime safety assert — the bot can never spend more than the pool.
+      if (winnerLamports + marketingLamports + buybackLamports > pool) {
+        const msg = `SAFETY ABORT: split (${winnerLamports} + ${marketingLamports} + ${buybackLamports}) > pool (${pool}).`;
         logger.error(msg);
         tracker.markPrizeFailed(msg);
         return;
@@ -195,9 +209,12 @@ async function main() {
 
       const winnerSol = winnerLamports / LAMPORTS_PER_SOL;
       const marketingSol = marketingLamports / LAMPORTS_PER_SOL;
+      const buybackSol = buybackLamports / LAMPORTS_PER_SOL;
       logger.info(
         `Pool ${(pool / LAMPORTS_PER_SOL).toFixed(6)} SOL · ` +
-        `winner ${winnerSol.toFixed(6)} (${winnerPct}%) · marketing ${marketingSol.toFixed(6)} (${100 - winnerPct}%)`
+        `winner ${winnerSol.toFixed(6)} (${config.winnerPercent}%) · ` +
+        `marketing ${marketingSol.toFixed(6)} (${config.marketingPercent}%) · ` +
+        `buyback ${buybackSol.toFixed(6)} (${config.buybackPercent}%) 🔥`
       );
 
       if (winnerLamports <= 0 || winnerSol < config.minPrizeSol) {
@@ -254,6 +271,37 @@ async function main() {
         hops: sendResult.hops,
         marketingTx,
       });
+
+      // ── 8. Buyback + incinerate ──────────────────────────────────────────
+      // Take BUYBACK_PERCENT of the original pool, buy $VIRUS on pump.fun,
+      // and burn the bought tokens via SPL burn instruction (visible burn,
+      // actually decrements mint.supply). Pool is only debited by the actual
+      // SOL spent (measured via balance delta), never the request amount.
+      if (buybackLamports > 0 && buybackSol >= config.minBuybackSol) {
+        tracker.startBurnAnimation(buybackSol);
+        try {
+          const result = await burner.buybackAndBurn(buybackSol);
+          tracker.markBurnPhase(result.buyTx);
+          tracker.recordBurn({
+            solSpent: result.solSpent,
+            tokensBurnedUi: result.tokensBurnedUi,
+            buyTx: result.buyTx,
+            burnTx: result.burnTx,
+          });
+          // Debit pool by ACTUAL SOL spent (delta), not requested amount.
+          const spentLamports = Math.floor(result.solSpent * LAMPORTS_PER_SOL);
+          tracker.debitClaimPool(Math.min(spentLamports, buybackLamports));
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          logger.error(`Buyback/burn failed: ${msg}`);
+          tracker.markBurnFailed(msg);
+          // Pool is not debited — buyback slice carries over to next cycle.
+        }
+      } else if (buybackLamports > 0) {
+        tracker.recordInfo(
+          `Buyback slice ${buybackSol.toFixed(6)} SOL below min ${config.minBuybackSol} — carrying over.`
+        );
+      }
 
       await updateBalances();
     } catch (e) {
